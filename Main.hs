@@ -7,6 +7,7 @@ import Usb.HidApi
 import System.Process
 import System.IO
 import Control.Monad
+import Control.Monad.IO.Class
 import Prelude hiding (catch)
 import Control.Exception (catch, SomeException)
 import Control.Concurrent
@@ -25,6 +26,9 @@ import Data.Word
 import Data.Maybe
 import Database.HDBC
 import Database.HDBC.PostgreSQL
+import qualified Data.Conduit as C
+import Data.Conduit.Binary hiding (take)
+import qualified Data.Conduit.List as L (foldM)
 import System.IO.Unsafe
 
 import Control.Monad.IO.Class (liftIO)
@@ -145,20 +149,19 @@ process msgChan str = let (msg', msg, cs) = (B.init str, B.init msg', B.last msg
                      Right m  -> do print m
                                     writeChan msgChan m
 
-usbPackets :: IO [B.ByteString]
-usbPackets = do dev <- hidOpen 0x0fde 0xca01
-                packets dev
-    where packets dev = unsafeInterleaveIO $ liftM2 (:) (hidRead dev 8) (packets dev)
-
+usbSource :: MonadIO m => HidDevice -> C.GSource m B.ByteString
+usbSource dev = loop
+    where loop = do packet <- liftIO (hidRead dev 8)
+                    C.yield packet >> loop
 
 data ParseState = SYNC | FIRST | READY [Word8]
-readBackend :: Chan WmrMessage -> IO ()
-readBackend chan = usbPackets >>= loop
-    where loop ps = loop' ps SYNC
-          loop' (p:ps) s = iter p s >>= loop' ps
-          iter p s = if p == B.empty then return s
-                     else let (hd:tl) = B.unpack p
-                              len     = fromIntegral hd in
+readUsb :: Chan WmrMessage -> IO ()
+readUsb chan = do dev <- hidOpen 0x0fde 0xca01
+                  usbSource dev C.$$ sinkUsb
+                  return ()
+    where sinkUsb = L.foldM iter SYNC
+          iter s p = if p == B.empty then return s
+                     else let (hd:tl) = B.unpack p in
                           foldM step s $ take (fromIntegral hd) tl
           step state c = 
               case state of
@@ -167,7 +170,6 @@ readBackend chan = usbPackets >>= loop
                 READY acc -> if c == 0xff then do process chan $ B.pack $ reverse acc
                                                   return SYNC
                              else return $ READY $ c:acc
-
 
 threadWrapper :: MVar () -> IO () -> IO ()
 threadWrapper mvar action = do forkIO $ catch action (\(e::SomeException) -> putMVar mvar ())
@@ -178,5 +180,5 @@ main = do
   msgChan <- newChan
   mvar <- newEmptyMVar
   threadWrapper mvar $ dbBackend msgChan
-  threadWrapper mvar $ readBackend msgChan
+  threadWrapper mvar $ readUsb msgChan
   takeMVar mvar
