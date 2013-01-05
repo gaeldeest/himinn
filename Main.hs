@@ -171,8 +171,8 @@ readUsb chan = do dev <- hidOpen 0x0fde 0xca01
                                                   return SYNC
                              else return $ READY $ c:acc
 
-threadWrapper :: MVar () -> IO () -> IO ()
-threadWrapper mvar action = do forkIO $ catch action (\(e::SomeException) -> putMVar mvar ())
+threadWrapper :: MVar SomeException -> IO () -> IO ()
+threadWrapper mvar action = do forkIO $ catch action (\(e::SomeException) -> putMVar mvar e)
                                return ()
 
 main :: IO ()
@@ -181,4 +181,5 @@ main = do
   mvar <- newEmptyMVar
   threadWrapper mvar $ dbBackend msgChan
   threadWrapper mvar $ readUsb msgChan
-  takeMVar mvar
+  err <- takeMVar mvar
+  print err
