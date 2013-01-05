@@ -1,11 +1,11 @@
 {-# LANGUAGE ForeignFunctionInterface, DeriveDataTypeable, DoAndIfThenElse #-}
-module Usb.HidApi ( hidInit
-                  , hidOpen
-                  , hidClose
-                  , hidRead
-                  , hidWrite
-                  , HidDevice
-                  ) where
+module System.USB.HID ( hidInit
+                      , hidOpen
+                      , hidClose
+                      , hidRead
+                      , hidWrite
+                      , HidDevice
+                      ) where
 
 import Foreign.C.Types
 import Foreign.Ptr
