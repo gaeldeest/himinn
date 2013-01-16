@@ -1,0 +1,21 @@
+# What is himinn ?
+
+Himinn is a weather-data logger supporting a variety of sources and backends.
+
+Well, as of now it only supports WMR100 (and probably WMR100N) Weather Stations.
+
+# Supported Platforms
+
+Himinn runs on Linux and Mac OS X.
+
+# Software Requirements
+
+<TODO>
+
+# Installing himinn
+
+Once the aforementioned software is installed, you can install himinn by grabbing by fetching the Git repository and entering the following commands:
+
+    > cabal configure
+    > cabal build
+    > cabal install
