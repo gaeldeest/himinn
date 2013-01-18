@@ -102,9 +102,10 @@ usbUnwrap :: Monad m => C.GConduit B.ByteString m B.ByteString
 usbUnwrap = loop
     where loop = do await >>= (maybe loop $ \packet -> case B.uncons packet of
                       Nothing       -> loop
-                      Just (hd, tl) -> let len = fromIntegral hd in
+                      Just (hd, tl) -> let len = fromIntegral hd
+                                           sub = B.take len tl in
                                        if len > B.length tl then loop
-                                       else traceShow $ C.yield packet >> loop)
+                                       else C.yield sub >> loop)
 
 usbPackets :: MonadIO m => HidDevice -> C.GSource m B.ByteString
 usbPackets dev = loop
