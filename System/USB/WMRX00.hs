@@ -104,12 +104,12 @@ usbUnwrap = loop
                       Nothing       -> loop
                       Just (hd, tl) -> let len = fromIntegral hd in
                                        if len > B.length tl then loop
-                                       else C.yield packet >> loop)
+                                       else traceShow $ C.yield packet >> loop)
 
 usbPackets :: MonadIO m => HidDevice -> C.GSource m B.ByteString
 usbPackets dev = loop
   where loop = do packet <- liftIO (hidRead dev 8)
-                  traceShow packet $ (C.yield packet >> loop)
+                  C.yield packet >> loop
 
 processMessage :: MonadIO m => Chan WMRMessage -> B.ByteString -> m ()
 processMessage msgChan str = let (msg', msg, cs) = (B.init str, B.init msg', B.last msg') in
