@@ -15,6 +15,8 @@ import Control.Concurrent.Chan
 import Control.Concurrent.MVar
 import System.Posix.IO
 
+import Control.Monad.Trans.Resource
+import Data.Conduit (Sink, awaitForever, ($$))
 import qualified Data.ByteString as B
 import Control.Applicative ((<$>), (<*>))
 import Data.Bits
@@ -63,11 +65,9 @@ threadWrapper :: MVar SomeException -> IO () -> IO ()
 threadWrapper mvar action = do forkIO $ catch action (\(e::SomeException) -> putMVar mvar e)
                                return ()
 
+justReadMessages :: MonadIO m => (WMRMessage -> IO ()) -> Sink WMRMessage m ()
+justReadMessages action = awaitForever onMessage
+  where onMessage m = liftIO $ action m
+
 main :: IO ()
-main = do
-  msgChan <- newChan
-  mvar <- newEmptyMVar
-  threadWrapper mvar $ dbBackend msgChan
-  threadWrapper mvar $ feedWMRMessageChan msgChan
-  err <- takeMVar mvar
-  print err
+main = runResourceT $ wmr100source $$ justReadMessages print
