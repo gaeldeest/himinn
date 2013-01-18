@@ -22,7 +22,7 @@ import Data.Word
 import Control.Concurrent.Chan
 import Numeric
 
-data WeatherForecast = PartlyCloudy | Rainy | Cloudy | Sunny | Unknown | Snowy
+data WeatherForecast = PartlyCloudy | Rainy | Cloudy | Sunny | ClearNight | Snowy | PartlyCloudyNight
                        deriving (Show, Eq, Enum)
 
 data WindDirection = N | NNE | NE | ENE
