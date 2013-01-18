@@ -109,7 +109,7 @@ usbUnwrap = loop
 usbPackets :: MonadIO m => HidDevice -> C.GSource m B.ByteString
 usbPackets dev = loop
   where loop = do packet <- liftIO (hidRead dev 8)
-                  trace packet $ (C.yield packet >> loop)
+                  traceShow packet $ (C.yield packet >> loop)
 
 processMessage :: MonadIO m => Chan WMRMessage -> B.ByteString -> m ()
 processMessage msgChan str = let (msg', msg, cs) = (B.init str, B.init msg', B.last msg') in
