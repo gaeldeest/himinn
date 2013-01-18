@@ -2,13 +2,15 @@ module System.USB.WMRX00 ( WMRMessage(..)
                          , WeatherForecast(..)
                          , WindDirection(..)
                          , feedWMRMessageChan
+                         , wmr100source
                          ) where
 
 import Control.Monad
 import Control.Monad.IO.Class
 import System.USB.HID
 import qualified Data.ByteString as B
-import qualified Data.Conduit as C       
+import Data.Conduit (await, yield, ($=), (=$=))
+import qualified Data.Conduit as C
 import Data.Conduit.Binary hiding (take)
 import qualified Data.Conduit.List as L (foldM)       
 import Control.Monad.IO.Class (liftIO)
@@ -95,22 +97,73 @@ msgParser = do anyChar
 computeCheckSum :: B.ByteString -> Word8
 computeCheckSum msg = fromInteger $ B.foldl (\a c -> a + fromIntegral (fromEnum c)) 0 msg .&. 255
 
+usbUnwrap :: Monad m => C.GConduit B.ByteString m B.ByteString
+usbUnwrap = loop
+    where loop = do await >>= (maybe loop $ \packet -> case B.uncons packet of
+                      Nothing       -> loop
+                      Just (hd, tl) -> let len = fromIntegral hd in
+                                       if len > B.length tl then loop
+                                       else C.yield packet >> loop)
+
 usbPackets :: MonadIO m => HidDevice -> C.GSource m B.ByteString
 usbPackets dev = loop
-    where loop = do packet <- liftIO (hidRead dev 8)
-                    C.yield packet >> loop
+  where loop = do packet <- liftIO (hidRead dev 8)
+                  C.yield packet >> loop
 
-processMessage :: Chan WMRMessage -> B.ByteString -> IO ()
+processMessage :: MonadIO m => Chan WMRMessage -> B.ByteString -> m ()
 processMessage msgChan str = let (msg', msg, cs) = (B.init str, B.init msg', B.last msg') in
-              if computeCheckSum msg /= cs then putStrLn "Error: Invalid CheckSum."
+              if computeCheckSum msg /= cs then liftIO $ putStrLn "Error: Invalid CheckSum."
               else case parse msgParser "" msg of
-                     Left err -> print err
-                     Right m  -> do print m
-                                    writeChan msgChan m
+                     Left err -> liftIO $ print err
+                     Right m  -> do liftIO $ print m
+                                    liftIO $ writeChan msgChan m
 
 data ParseState = SYNC | FIRST | READY [Word8]
-feedWMRMessageChan :: Chan WMRMessage -> IO ()
-feedWMRMessageChan chan = do dev <- hidOpen 0x0fde 0xca01
+splitStream :: Monad m => C.GConduit B.ByteString m B.ByteString
+splitStream = awaitWithState SYNC
+  where awaitWithState s = C.await >>= maybe (return ()) (wmrDecoder' s)
+        wmrDecoder' s i =
+          case B.uncons i of
+            Nothing       -> awaitWithState s
+            Just (hd, tl) -> case s of
+              SYNC      -> wmrDecoder' (if hd == 0xff then FIRST    else SYNC) tl
+              FIRST     -> wmrDecoder' (if hd == 0xff then READY [] else SYNC) tl
+              READY acc -> if hd == 0xff then do C.yield $ B.pack $ reverse acc
+                                                 wmrDecoder' SYNC tl
+                           else wmrDecoder' (READY $ hd:acc) tl
+
+-- processMessage :: MonadIO m => Chan WMRMessage -> B.ByteString -> m ()
+-- processMessage msgChan str = let (msg', msg, cs) = (B.init str, B.init msg', B.last msg') in
+--               if computeCheckSum msg /= cs then liftIO $ putStrLn "Error: Invalid CheckSum."
+--               else case parse msgParser "" msg of
+--                      Left err -> liftIO $ print err
+--                      Right m  -> do liftIO $ print m
+--                                     liftIO $ writeChan msgChan m
+
+parseMessages :: Monad m => C.GConduit B.ByteString m WMRMessage
+parseMessages = loop
+  where loop = do res <- await
+                  case res of
+                    Nothing -> loop
+                    Just msg -> case parse msgParser "" msg of
+                      Left err -> loop
+                      Right m  -> yield m >> loop
+
+filterBadMessages :: Monad m => C.GConduit B.ByteString m B.ByteString
+filterBadMessages = loop
+  where loop = do s <- await
+                  case s of Nothing  -> return ()
+                            Just str -> let (msg', msg, cs) = (B.init str, B.init msg', B.last msg') in
+                              if computeCheckSum msg /= cs then loop
+                              else yield msg >> loop
+
+wmr100source :: C.MonadResource m => C.Source m WMRMessage
+wmr100source = C.bracketP (hidOpen 0x0fde 0xca01) hidClose usbPackets $= process
+  where process = usbUnwrap =$= splitStream =$= filterBadMessages =$= parseMessages
+
+
+feedWMRMessageChan :: MonadIO m => Chan WMRMessage -> m ()
+feedWMRMessageChan chan = do dev <- liftIO $ hidOpen 0x0fde 0xca01
                              usbPackets dev C.$$ sinkUsb
                              return ()
     where sinkUsb = L.foldM iter SYNC
